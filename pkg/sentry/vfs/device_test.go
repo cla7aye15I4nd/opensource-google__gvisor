@@ -17,8 +17,43 @@ package vfs
 import (
 	"testing"
 
+	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/sentry/contexttest"
 )
+
+type testDevice struct {
+	opened bool
+}
+
+func (d *testDevice) Open(context.Context, *Mount, *Dentry, OpenOptions) (*FileDescription, error) {
+	d.opened = true
+	return nil, nil
+}
+
+func TestOpenDeviceSpecialFileOnNoDevMount(t *testing.T) {
+	ctx := contexttest.Context(t)
+	vfsObj := &VirtualFilesystem{}
+	if err := vfsObj.Init(ctx); err != nil {
+		t.Fatalf("VFS init: %v", err)
+	}
+	dev := &testDevice{}
+	const major = 1
+	const minor = 3
+	if err := vfsObj.RegisterDevice(CharDevice, major, minor, dev, &RegisterDeviceOptions{}); err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+	mnt := &Mount{
+		vfs:   vfsObj,
+		flags: MountFlags{NoDev: true},
+	}
+	if _, err := vfsObj.OpenDeviceSpecialFile(ctx, mnt, nil, CharDevice, major, minor, &OpenOptions{}); !linuxerr.Equals(linuxerr.EACCES, err) {
+		t.Fatalf("OpenDeviceSpecialFile on nodev mount got error %v, want EACCES", err)
+	}
+	if dev.opened {
+		t.Error("device Open called on nodev mount")
+	}
+}
 
 func TestGetSharedDynamicCharDevMajor(t *testing.T) {
 	ctx := contexttest.Context(t)
