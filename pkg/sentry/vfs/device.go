@@ -138,6 +138,9 @@ func (vfs *VirtualFilesystem) GetRegisteredDevice(kind DeviceKind, major, minor 
 // OpenDeviceSpecialFile returns a FileDescription representing the given
 // device.
 func (vfs *VirtualFilesystem) OpenDeviceSpecialFile(ctx context.Context, mnt *Mount, d *Dentry, kind DeviceKind, major, minor uint32, opts *OpenOptions) (*FileDescription, error) {
+	if mnt.Options().Flags.NoDev {
+		return nil, linuxerr.EACCES
+	}
 	tup := devTuple{kind, major, minor}
 	vfs.devicesMu.RLock()
 	defer vfs.devicesMu.RUnlock()
