@@ -550,6 +550,29 @@ TEST(MountTest, DeviceFileWritableOnReadonlyMount) {
   EXPECT_THAT(write(dev_fd.get(), "x", 1), SyscallSucceedsWithValue(1));
 }
 
+TEST(MountTest, NodevMountDeniesDeviceOpen) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_MKNOD)));
+
+  auto const dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mnt =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir.path(), kTmpfs, MS_NODEV, "", 0));
+  std::string const dev_path = JoinPath(dir.path(), "null");
+  ASSERT_THAT(mknod(dev_path.c_str(), S_IFCHR | 0600, makedev(1, 3)),
+              SyscallSucceeds());
+
+  // The node exists, but the mount policy prevents activating the device.
+  struct stat st = {};
+  ASSERT_THAT(stat(dev_path.c_str(), &st), SyscallSucceeds());
+  EXPECT_TRUE(S_ISCHR(st.st_mode));
+  EXPECT_THAT(open(dev_path.c_str(), O_RDONLY), SyscallFailsWithErrno(EACCES));
+  EXPECT_THAT(open(dev_path.c_str(), O_WRONLY), SyscallFailsWithErrno(EACCES));
+  EXPECT_THAT(open(dev_path.c_str(), O_RDWR), SyscallFailsWithErrno(EACCES));
+
+  // O_PATH references the inode without opening the device and remains allowed.
+  ASSERT_NO_ERRNO_AND_VALUE(Open(dev_path, O_PATH));
+}
+
 TEST(MountTest, ReadOnlyBindMountAllowsWriteOpenOfCharDevice) {
   SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
 

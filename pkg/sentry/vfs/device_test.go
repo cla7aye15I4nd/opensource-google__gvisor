@@ -15,10 +15,63 @@
 package vfs
 
 import (
+	"fmt"
 	"testing"
 
+	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/sentry/contexttest"
 )
+
+type testDevice struct {
+	opened bool
+}
+
+func (d *testDevice) Open(context.Context, *Mount, *Dentry, OpenOptions) (*FileDescription, error) {
+	d.opened = true
+	return nil, nil
+}
+
+func TestOpenDeviceSpecialFileOnNoDevMount(t *testing.T) {
+	for _, kind := range []DeviceKind{CharDevice, BlockDevice} {
+		t.Run(kind.String(), func(t *testing.T) {
+			for _, noDev := range []bool{false, true} {
+				t.Run(fmt.Sprintf("nodev=%t", noDev), func(t *testing.T) {
+					testOpenDeviceSpecialFileMountPolicy(t, kind, noDev)
+				})
+			}
+		})
+	}
+}
+
+func testOpenDeviceSpecialFileMountPolicy(t *testing.T, kind DeviceKind, noDev bool) {
+	ctx := contexttest.Context(t)
+	vfsObj := &VirtualFilesystem{}
+	if err := vfsObj.Init(ctx); err != nil {
+		t.Fatalf("VFS init: %v", err)
+	}
+	dev := &testDevice{}
+	const major = 1
+	const minor = 3
+	if err := vfsObj.RegisterDevice(kind, major, minor, dev, &RegisterDeviceOptions{}); err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+	mnt := &Mount{
+		vfs:   vfsObj,
+		flags: MountFlags{NoDev: noDev},
+	}
+	_, err := vfsObj.OpenDeviceSpecialFile(ctx, mnt, nil, kind, major, minor, &OpenOptions{})
+	if noDev {
+		if !linuxerr.Equals(linuxerr.EACCES, err) {
+			t.Errorf("OpenDeviceSpecialFile on nodev mount got error %v, want EACCES", err)
+		}
+	} else if err != nil {
+		t.Errorf("OpenDeviceSpecialFile on dev mount got error %v, want nil", err)
+	}
+	if dev.opened != !noDev {
+		t.Errorf("device Open called = %t, want %t", dev.opened, !noDev)
+	}
+}
 
 func TestGetSharedDynamicCharDevMajor(t *testing.T) {
 	ctx := contexttest.Context(t)
